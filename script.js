@@ -83,6 +83,31 @@ async function checkDomain(domain) {
     }
 }
 
+
+// 添加本地存储相关函数
+function saveSuccessfulDomain(domain) {
+    const timestamp = new Date().getTime();
+    localStorage.setItem('lastSuccessfulDomain', JSON.stringify({
+        domain: domain,
+        timestamp: timestamp
+    }));
+}
+
+function getLastSuccessfulDomain() {
+    const saved = localStorage.getItem('lastSuccessfulDomain');
+    if (!saved) return null;
+    
+    const data = JSON.parse(saved);
+    const now = new Date().getTime();
+    // 检查是否在24小时内（在这里记录的时间了）
+    if (now - data.timestamp < 24 * 60 * 60 * 1000) {
+        return data.domain;
+    }    
+	// 如果超过24小时了，删除存储的数据
+    localStorage.removeItem('lastSuccessfulDomain');
+    return null;
+}
+
 // 创建加载中的域名元素
 function createLoadingDomainElement(routeNumber) {
     const routeSection = document.createElement('div');
@@ -122,6 +147,13 @@ function createLoadingDomainElement(routeNumber) {
             domainLink.textContent = status.available ? '点击进入线路' : '线路不可用';
             domainLink.target = '_blank';
             domainLink.className = status.available ? 'available-link' : 'unavailable-link';
+            
+            // 添加点击事件，保存成功访问的域名
+            if (status.available) {
+                domainLink.addEventListener('click', () => {
+                    saveSuccessfulDomain(domain);
+                });
+            }
 
             const domainText = document.createElement('span');
             domainText.className = 'domain-text';
@@ -164,6 +196,39 @@ function createLoadingDomainElement(routeNumber) {
 
 // 修改初始化页面函数
 async function initializePage() {
+    // 检查是否有最近成功访问的域名
+    const lastDomain = getLastSuccessfulDomain();
+    if (lastDomain) {
+        // 创建简单的跳转提示
+        const redirectDiv = document.createElement('div');
+        redirectDiv.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            z-index: 1000;
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.5);
+        `;
+        redirectDiv.textContent = '正在跳转到上次可用的域名...';
+        document.body.appendChild(redirectDiv);
+
+        // 隐藏主要内容
+        document.querySelector('.container').style.display = 'none';
+        document.querySelector('.footer').style.display = 'none';
+        document.querySelector('.header').style.display = 'none';
+
+        // 直接跳转
+        setTimeout(() => {
+            window.location.href = `https://${lastDomain}`;
+        }, 1000);
+        return;
+    }
+	
     const domainList = document.getElementById('domain-list');
     const errorMessage = document.getElementById('error-message');
     const selectedDomains = getRandomDomains(5);
@@ -177,9 +242,11 @@ async function initializePage() {
     }
 
     // 并行检测所有域名
+    const checkResults = [];
     const checkPromises = selectedDomains.map(async (domain, index) => {
         const status = await checkDomain(domain);
         routeElements[index].updateContent(domain, status);
+        checkResults.push({ domain, status, index });
         return status.available;
     });
 
@@ -192,6 +259,65 @@ async function initializePage() {
         errorMessage.style.display = 'block';
     } else {
         errorMessage.style.display = 'none';
+        
+        // 找到延迟最低的可用域名
+        const availableDomains = checkResults.filter(result => result.status.available);
+        if (availableDomains.length > 0) {
+            const fastestDomain = availableDomains.reduce((prev, current) => {
+                return prev.status.latency < current.status.latency ? prev : current;
+            });
+
+            // 创建倒计时提示
+            const countdownDiv = document.createElement('div');
+            countdownDiv.className = 'countdown-tip';
+            countdownDiv.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: rgba(0, 0, 0, 0.8);
+                color: #fff;
+                padding: 15px 20px;
+                border-radius: 8px;
+                z-index: 1000;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+                border: 1px solid #4CAF50;
+            `;
+            document.body.appendChild(countdownDiv);
+
+            // 开始3秒倒计时
+            let countdown = 3;
+            const updateCountdown = () => {
+                countdownDiv.textContent = `${countdown} 秒后自动跳转到最快线路...`;
+                if (countdown === 0) {
+                    // 保存成功访问的域名
+                    saveSuccessfulDomain(fastestDomain.domain);
+                    window.location.href = `https://${fastestDomain.domain}`;
+                } else {
+                    countdown--;
+                    setTimeout(updateCountdown, 1000);
+                }
+            };
+            updateCountdown();
+
+            // 高亮显示最快的线路
+            const fastestElement = routeElements[fastestDomain.index].element;
+            fastestElement.style.border = '2px solid #4CAF50';
+            fastestElement.style.boxShadow = '0 0 15px rgba(76, 175, 80, 0.3)';
+            
+            // 添加"最快线路"标签
+            const fastestLabel = document.createElement('div');
+            fastestLabel.textContent = '🚀 最快线路';
+            fastestLabel.style.cssText = `
+                background: #4CAF50;
+                color: white;
+                padding: 5px 10px;
+                border-radius: 4px;
+                font-size: 12px;
+                display: inline-block;
+                margin-left: 10px;
+            `;
+            fastestElement.querySelector('.route-title').appendChild(fastestLabel);
+        }
     }
 }
 
